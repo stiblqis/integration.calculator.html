@@ -1,0 +1,331 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Minimal Calculus Calculator</title>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/mathjs/11.8.0/math.js"></script>
+    <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
+    <style>
+        :root {
+            --bg-color: #f8f9fa;
+            --panel-bg: #ffffff;
+            --primary-color: #2563eb;
+            --text-color: #1e293b;
+            --border-color: #e2e8f0;
+        }
+
+        body {
+            font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+            margin: 0;
+            padding: 0;
+            background-color: var(--bg-color);
+            color: var(--text-color);
+            display: flex;
+            height: 100vh;
+            overflow: hidden;
+        }
+
+        /* Sidebar Sidebar Controls */
+        #sidebar {
+            width: 350px;
+            background-color: var(--panel-bg);
+            border-right: 1px solid var(--border-color);
+            padding: 20px;
+            box-shadow: 2px 0 5px rgba(0,0,0,0.05);
+            display: flex;
+            flex-direction: column;
+            gap: 20px;
+            overflow-y: auto;
+            z-index: 10;
+        }
+
+        h2 {
+            margin: 0 0 10px 0;
+            font-size: 1.5rem;
+            color: var(--primary-color);
+        }
+
+        .input-group {
+            display: flex;
+            flex-direction: column;
+            gap: 8px;
+        }
+
+        label {
+            font-weight: 600;
+            font-size: 0.85rem;
+            text-transform: uppercase;
+            letter-spacing: 0.5px;
+            color: #64748b;
+        }
+
+        input {
+            padding: 10px;
+            border: 1px solid var(--border-color);
+            border-radius: 6px;
+            font-size: 1rem;
+            outline: none;
+            transition: border-color 0.2s;
+        }
+
+        input:focus {
+            border-color: var(--primary-color);
+        }
+
+        .range-group {
+            display: grid;
+            grid-template-columns: 1fr 1fr;
+            gap: 10px;
+        }
+
+        /* Result Panel */
+        #result-box {
+            background-color: #f1f5f9;
+            border-radius: 8px;
+            padding: 15px;
+            margin-top: auto;
+            border-left: 4px solid var(--primary-color);
+        }
+
+        #result-box div {
+            margin-bottom: 8px;
+            font-size: 0.95rem;
+        }
+
+        #result-box div:last-child {
+            margin-bottom: 0;
+        }
+
+        .val {
+            font-weight: bold;
+            font-family: monospace;
+            font-size: 1.1rem;
+            color: #0f172a;
+        }
+
+        /* Graph Window Area */
+        #graph-container {
+            flex-grow: 1;
+            position: relative;
+            padding: 20px;
+            background: #ffffff;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+        }
+
+        canvas {
+            width: 100% !important;
+            height: 100% !important;
+        }
+
+        .error {
+            color: #ef4444;
+            font-size: 0.85rem;
+            margin-top: 4px;
+            display: none;
+        }
+    </style>
+</head>
+<body>
+
+    <div id="sidebar">
+        <div>
+            <h2>Graph & Integrate</h2>
+            <p style="font-size: 0.85rem; color:#64748b; margin: 0;">A simplified interactive graphing tool for definite integrations.</p>
+        </div>
+
+        <div class="input-group">
+            <label for="function-input">Function f(x)</label>
+            <input type="text" id="function-input" value="x^2 - 2x" placeholder="e.g., sin(x), x^3 - x">
+            <div id="error-msg" class="error">Invalid mathematical expression.</div>
+        </div>
+
+        <div class="range-group">
+            <div class="input-group">
+                <label for="bound-a">Lower Bound (a)</label>
+                <input type="number" id="bound-a" value="0" step="any">
+            </div>
+            <div class="input-group">
+                <label for="bound-b">Upper Bound (b)</label>
+                <input type="number" id="bound-b" value="3" step="any">
+            </div>
+        </div>
+
+        <div class="range-group">
+            <div class="input-group">
+                <label for="xmin">X Min</label>
+                <input type="number" id="xmin" value="-2" step="any">
+            </div>
+            <div class="input-group">
+                <label for="xmax">X Max</label>
+                <input type="number" id="xmax" value="5" step="any">
+            </div>
+        </div>
+
+        <div id="result-box">
+            <div>Definite Integral Evaluation:</div>
+            <div id="integral-val" class="val">0.00</div>
+            <div style="margin-top: 10px; font-size: 0.8rem; color:#64748b;">
+                Area under curves below the x-axis are computed as negative.
+            </div>
+        </div>
+    </div>
+
+    <div id="graph-container">
+        <canvas id="graphCanvas"></canvas>
+    </div>
+
+    <script>
+        const ctx = document.getElementById('graphCanvas').getContext('2d');
+        let chartInstance = null;
+
+        // Elements
+        const exprInput = document.getElementById('function-input');
+        const boundAInput = document.getElementById('bound-a');
+        const boundBInput = document.getElementById('bound-b');
+        const xminInput = document.getElementById('xmin');
+        const xmaxInput = document.getElementById('xmax');
+        const errorMsg = document.getElementById('error-msg');
+        const integralVal = document.getElementById('integral-val');
+
+        // Setup Event Listeners
+        [exprInput, boundAInput, boundBInput, xminInput, xmaxInput].forEach(element => {
+            element.addEventListener('input', updateGraph);
+        });
+
+        // Numeric Integration Function using Simpson's Rule
+        function simpsonsRule(f, a, b, n = 1000) {
+            if (n % 2 !== 0) n++; // Needs to be even
+            const h = (b - a) / n;
+            let sum = f(a) + f(b);
+
+            for (let i = 1; i < n; i++) {
+                const x = a + i * h;
+                sum += i % 2 === 0 ? 2 * f(x) : 4 * f(x);
+            }
+            return (h / 3) * sum;
+        }
+
+        function updateGraph() {
+            errorMsg.style.display = 'none';
+            
+            const exprString = exprInput.value;
+            const a = parseFloat(boundAInput.value);
+            const b = parseFloat(boundBInput.value);
+            const xMin = parseFloat(xminInput.value);
+            const xMax = parseFloat(xmaxInput.value);
+
+            // Validation Safeguard
+            if (isNaN(a) || !isNaN(b) && a > b || xMin >= xMax) {
+                return; 
+            }
+
+            try {
+                // Compile math expression
+                const parser = math.compile(exprString);
+                const f = (x) => parser.evaluate({ x: x });
+
+                // Test evaluation to flag immediate code errors
+                f(xMin);
+
+                // Calculations
+                const points = 200; 
+                const step = (xMax - xMin) / points;
+                
+                const lineData = [];
+                const fillData = [];
+
+                // Generate primary curve data and bounded integral shading points
+                for (let i = 0; i <= points; i++) {
+                    const x = xMin + i * step;
+                    const y = f(x);
+                    
+                    if (!isNaN(y) && isFinite(y)) {
+                        lineData.push({ x: x, y: y });
+                        
+                        // Populate separate array to render filled integral bounds visually
+                        if (x >= a && x <= b) {
+                            fillData.push({ x: x, y: y });
+                        }
+                    }
+                }
+
+                // Compute numeric value of integral
+                const calculationResult = simpsonsRule(f, a, b);
+                integralVal.innerText = isNaN(calculationResult) ? "Error" : calculationResult.toFixed(4);
+
+                // Render Chart 
+                renderChart(lineData, fillData, xMin, xMax, a, b);
+
+            } catch (err) {
+                errorMsg.style.display = 'block';
+                integralVal.innerText = '—';
+            }
+        }
+
+        function renderChart(lineData, fillData, xMin, xMax, a, b) {
+            if (chartInstance) {
+                chartInstance.destroy();
+            }
+
+            chartInstance = new Chart(ctx, {
+                type: 'scatter',
+                data: {
+                    datasets: [
+                        {
+                            label: 'f(x)',
+                            data: lineData,
+                            showLine: true,
+                            borderColor: '#2563eb',
+                            borderWidth: 3,
+                            pointRadius: 0,
+                            fill: false,
+                            tension: 0.1,
+                            z: 2
+                        },
+                        {
+                            label: `Integral range [${a}, ${b}]`,
+                            data: fillData,
+                            showLine: true,
+                            borderColor: 'transparent',
+                            pointRadius: 0,
+                            backgroundColor: 'rgba(37, 99, 235, 0.2)',
+                            fill: 'origin', // Colors down to the absolute center X axis line
+                            z: 1
+                        }
+                    ]
+                },
+                options: {
+                    responsive: true,
+                    maintainAspectRatio: false,
+                    animation: false,
+                    plugins: {
+                        legend: { display: false }
+                    },
+                    scales: {
+                        x: {
+                            type: 'linear',
+                            position: 'center', // Centers visual horizontal plane standard in graphing calculators
+                            min: xMin,
+                            max: xMax,
+                            grid: { color: '#cbd5e1' },
+                            ticks: { color: '#64748b' }
+                        },
+                        y: {
+                            type: 'linear',
+                            position: 'center', // Centers visual vertical plane standard in graphing calculators
+                            grid: { color: '#cbd5e1' },
+                            ticks: { color: '#64748b' }
+                        }
+                    }
+                }
+            });
+        }
+
+        // Run app instantly on load
+        updateGraph();
+    </script>
+</body>
+</html>
